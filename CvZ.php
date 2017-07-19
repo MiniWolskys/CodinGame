@@ -27,7 +27,7 @@ function	get_distance($pos1, $pos2) {
 function	can_reach($human, $distz, $player) {
 	$distp = get_distance($human, $player);
 
-	if ($distz / 400 > $distp / 1000 + 2000)
+	if ($distz / 400 < ($distp - 3000) / 1000)
 		return (false);
 	return (true);
 }
@@ -35,8 +35,7 @@ function	can_reach($human, $distz, $player) {
 function	find_closer($humans, $zombies, $player) {
 	$minAll = 99999;
 	$dest = new pos ();
-	$dest->x = 8000;
-	$dest->y = 4500;
+	$dest = $humans[0];
 	foreach ($humans as $idh => $human) {
 		$min = 99999;
 		foreach ($zombies as $idz => $zombie) {
@@ -48,10 +47,6 @@ function	find_closer($humans, $zombies, $player) {
 		if (can_reach($human, $min, $player) && $minAll > $min) {
 			$minAll = $min;
 			$dest = $human;
-		error_log ("I'm watching over $idh.");
-		if (can_reach($human, $min, $player)) {
-			error_log ("I think I can reach him in time");
-			}
 		}
 	}
 	return ($dest);
@@ -98,18 +93,6 @@ while (TRUE)
 		$zombies[$zombieId]->x = $nextX;
 		$zombies[$zombieId]->y = $nextY;
     }
-
-	if (count($humans) != $humanCount) {
-		error_log ("Human count is wrong");
-		error_log (var_export(count($humans), true));
-		error_log (var_export($humanCount, true));
-	}
-
-	if (count($zombies) != $zombieCount) {
-		error_log ("Zombie count is wrong");
-		error_log (var_export(count($zombies), true));
-		error_log (var_export($zombieCount, true));
-	}
 
 	$dest = find_closer($humans, $zombies, $player);
 
