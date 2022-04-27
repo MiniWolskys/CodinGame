@@ -23,6 +23,11 @@
 #define HERO_MOVEMENT_SPEED 800
 #define HERO_ATTACK_RANGE 800
 #define HERO_VISION_RANGE 2200
+#define HERO_SPELL_CONTROL_RANGE 2200
+#define HERO_SPELL_SHIELD_RANGE 2200
+#define HERO_SPELL_WIND_RANGE 1280
+#define HERO_SPELL_WIND_PUSH 2200
+
 
 // DEFINE FUNCTIONS DECLARATIONS
 #define ABS(x) ((x < 0) ? -(x) : (x))
@@ -58,6 +63,8 @@ struct s_entity {
     t_pos   *direction;
     t_pos   *pos;
     int     movementSpeed;
+    int         isControlled;
+    int         shield;
 };
 
 struct s_monster {
@@ -72,8 +79,6 @@ struct s_hero {
     t_entity    *entity;
     t_role      role;
     int         mine;
-    int         isControlled;
-    int         shield;
 };
 
 struct s_base {
@@ -115,8 +120,8 @@ t_pos       *moveByValues(t_pos *a, int vx, int vy);
 
 t_pos       *initPos();
 t_pos       *initPosValues(int x, int y);
-t_entity    *initEntity(int id, int x, int y, int vx, int vy, int movementSpeed);
-t_monster   *initMonster(int id, int x, int y, int hp, int vx, int vy, int nearBase, int threatFor);
+t_entity    *initEntity(int id, int x, int y, int vx, int vy, int movementSpeed, int isControlled, int shield);
+t_monster   *initMonster(int id, int x, int y, int hp, int vx, int vy, int nearBase, int threatFor, int isControlled, int shield);
 t_hero      *initHero(int id, int x, int y, int shield, int isControlled, int owner);
 t_base      *initBase(int baseX, int baseY);
 t_player    *initPlayer(int id, int heroCount, int baseX, int baseY);
@@ -217,7 +222,7 @@ t_pos   *initPosValues(int x, int y)
     return (pos);
 }
 
-t_entity *initEntity(int id, int x, int y, int vx, int vy, int movementSpeed)
+t_entity *initEntity(int id, int x, int y, int vx, int vy, int movementSpeed, int isControlled, int shield)
 {
     t_entity *e;
 
@@ -226,16 +231,18 @@ t_entity *initEntity(int id, int x, int y, int vx, int vy, int movementSpeed)
     e->pos = initPosValues(x, y);
     e->direction = initPosValues(vx, vy);
     e->movementSpeed = movementSpeed;
+    e->isControlled = isControlled;
+    e->shield = shield;
 
     return (e);
 }
 
-t_monster *initMonster(int id, int x, int y, int hp, int vx, int vy, int nearBase, int threatFor)
+t_monster *initMonster(int id, int x, int y, int hp, int vx, int vy, int nearBase, int threatFor, int isControlled, int shield)
 {
     t_monster *m;
 
     m = (t_monster *)malloc(sizeof(*m));
-    m->entity = initEntity(id, x, y, vx, vy, MONSTER_MOVEMENT_SPEED);
+    m->entity = initEntity(id, x, y, vx, vy, MONSTER_MOVEMENT_SPEED, isControlled, shield);
     m->hp = hp;
     m->nearBase = nearBase;
     m->threatFor = threatFor;
@@ -250,10 +257,8 @@ t_hero  *initHero(int id, int x, int y, int shield, int isControlled, int owner)
 
     h = (t_hero *)malloc(sizeof(*h));
     h->mine = owner;
-    h->entity = initEntity(id, x, y, 0, 0, HERO_MOVEMENT_SPEED);
+    h->entity = initEntity(id, x, y, 0, 0, HERO_MOVEMENT_SPEED, isControlled, shield);
     h->role = NO_ROLE;
-    h->isControlled = isControlled;
-    h->shield = shield;
 
     return (h);
 }
@@ -436,6 +441,18 @@ t_monster **findNearbyMonsters(t_pos *pos, t_monster **monsters, int monsterCoun
     return (nearbyMonsters);
 }
 
+int     baseIsInDanger(t_base *base, t_monster **monsters, int monsterCount)
+{
+    int i;
+
+    for (i = 0; i < monsterCount; i++)
+    {
+        if (getDistance(base->pos, monsters[i]->entity->pos) < 700 && monsters[i]->hp > 2)
+            return (1);
+    }
+    return (0);
+}
+
 int     getTotalMonsterHp(t_monster **monsters)
 {
     int totalHp;
@@ -464,6 +481,84 @@ int     getMonsterNumber(t_monster **monsters)
     return (i);
 }
 
+t_monster *findMonsterToShield(t_hero *hero, t_monster **monsters, t_base *base)
+{
+    t_monster *monster;
+    int i;
+
+    i = 0;
+    while (monsters[i])
+    {
+        if (monsters[i]->threatFor == 2 && monsters[i]->hp > 14 && monsters[i]->entity->shield == 0 && getDistance(base->pos, monsters[i]->entity->pos) < 8000 && getDistance(hero->entity->pos, monsters[i]->entity->pos) < HERO_SPELL_SHIELD_RANGE) {
+            return (monsters[i]);
+        }
+        i++;
+    }
+    return (NULL);
+}
+
+t_monster *findMonsterToAttackWith(t_hero *hero, t_monster **monsters, t_base *base)
+{
+    int i;
+
+    i = 0;
+    while (monsters[i])
+    {
+        if (monsters[i]->hp > 14 && monsters[i]->threatFor == 0 && getDistance(monsters[i]->entity->pos, base->pos) < 5400)
+            return (monsters[i]);
+        i++;
+    }
+
+    return (NULL);
+}
+
+void    playAttacker(t_hero *hero, t_game *game, t_monster **monsters, int monsterCount)
+{
+    t_monster **monstersNearHero;
+    t_monster *targetMonster;
+    int monsterNearHeroCount;
+
+    debug("ATTACKER : What to do...\n");
+    if (getDistance(hero->entity->pos, game->me->base->pos) < getDistance(hero->entity->pos, game->opponent->base->pos))
+    {
+            debug("ATTACKER : Moving toward enemy base.\n");
+            printf("MOVE %d %d\n", game->opponent->base->pos->x, game->opponent->base->pos->y);
+            return ;
+    }
+    monstersNearHero = findNearbyMonsters(hero->entity->pos, monsters, monsterCount, HERO_VISION_RANGE);
+    if (getMonsterNumber(monstersNearHero))
+    {
+        if (game->me->mana >= 50)
+        {
+            // try to use spell
+            targetMonster = findMonsterToShield(hero, monstersNearHero, game->opponent->base);
+            if (targetMonster)
+            {
+                debug("Shielding monster attacking enemy\n");
+                printf("SPELL SHIELD %d\n", targetMonster->entity->id);
+                return ;
+            }
+            targetMonster = findMonsterToAttackWith(hero, monstersNearHero, game->opponent->base);
+            if (targetMonster)
+            {
+                debug("Moving monster toward enemy\n");
+                printf("SPELL CONTROL %d %d %d\n", targetMonster->entity->id, game->opponent->base->pos->x, game->opponent->base->pos->y);
+                return ;
+            }
+        }
+        targetMonster = findClosestEnemy(hero->entity->pos, monstersNearHero, getMonsterNumber(monstersNearHero));
+        if (targetMonster)
+        {
+            debug("ATTACKER : Attacking closest enemy.\n");
+            printf("MOVE %d %d\n", targetMonster->entity->pos->x, targetMonster->entity->pos->y);
+            return ;
+        }
+    }
+    debug("ATTACKER : Nothing to do, exploring...\n");
+    // attackerExplore(hero, game);
+    printf("MOVE %d %d\n", ABS(game->opponent->base->pos->x - 4500), ABS(game->opponent->base->pos->y - 4500));
+}
+
 void    playDefenser(t_hero *hero, t_game *game, t_monster **monsters, int monsterCount)
 {
     t_monster **monstersNearBase;
@@ -471,26 +566,20 @@ void    playDefenser(t_hero *hero, t_game *game, t_monster **monsters, int monst
     t_monster *closestThreat;
     int monsterNearBaseCount;
 
-    fprintf(stderr, "DEFENSER: Let's see what I'll do...\n");
-//    monstersNearBase = findNearbyMonsters(game->me->base->pos, monsters, monsterCount, BASE_VISION_RANGE);
-//    if (getTotalMonsterHp(monstersNearBase) > 40)
-//    {
-//        fprintf(stderr, "DEFENSER: I'll help the goalkeeper !\n");
-//        playGoalKeeper(game, monsters, monsterCount);
-//        return ;
-//    }
+    debug("DEFENSER: What to do...\n");
     monstersNearHero = findNearbyMonsters(hero->entity->pos, monsters, monsterCount, HERO_VISION_RANGE);
     if (getMonsterNumber(monstersNearHero) > 0)
     {
         closestThreat = findClosestEnemy(hero->entity->pos, monstersNearHero, getMonsterNumber(monstersNearHero));
         if (closestThreat)
         {
-            fprintf(stderr, "DEFENSER: I'll attack the closest guy !\n");
+            debug("DEFENSER: I'll attack the closest guy !\n");
             printf("MOVE %d %d\n", closestThreat->entity->pos->x, closestThreat->entity->pos->y);
             return ;
         }
     }
-    fprintf(stderr, "DEFENSER: Nothing to do...\n");
+    debug("DEFENSER: Nothing to do, exploring...\n");
+    // defenserExplore(hero, game);
     printf("MOVE %d %d\n", ABS(game->me->base->pos->x - 4500), ABS(game->me->base->pos->y - 4500));
 }
 
@@ -504,7 +593,7 @@ void    playGoalKeeper(t_game *game, t_monster **monsters, int monsterCount)
         interceptedTarget = intercept(game->me->heroes[0]->entity, targetMonster->entity, game->me->base);
     }
     if (targetMonster) {
-        if (getDistance(targetMonster->entity->pos, game->me->base->pos) < 800 && game->me->mana > 9 && targetMonster->hp > 2) {
+        if (baseIsInDanger(game->me->base, monsters, monsterCount) || (getDistance(targetMonster->entity->pos, game->me->base->pos) < 800 && game->me->mana > 9 && targetMonster->hp > 2)) {
             printf("SPELL WIND 1500 1500\n");
         }
         else {
@@ -567,7 +656,7 @@ int main()
         for (i = 0; i < entity_count; i++) {
             scanf("%d%d%d%d%d%d%d%d%d%d%d", &id, &type, &x, &y, &shield_life, &is_controlled, &health, &vx, &vy, &near_base, &threat_for);
             if (type == 0) {
-                monsters[monsterCount] = initMonster(id, x, y, health, vx, vy, near_base, threat_for);
+                monsters[monsterCount] = initMonster(id, x, y, health, vx, vy, near_base, threat_for, is_controlled, shield_life);
                 monsterCount++;
             }
             if (type == 1) {
@@ -582,9 +671,9 @@ int main()
         printMonsters(monsters, monsterCount);
         playGoalKeeper(game, monsters, monsterCount);
         playDefenser(game->me->heroes[1], game, monsters, monsterCount);
-        playGoalKeeper(game, monsters, monsterCount);
-       // printf("MOVE %d %d\n", ABS(game->opponent->base->pos->x - 4500), ABS(game->opponent->base->pos->y - 4500));
+        playAttacker(game->me->heroes[2], game, monsters, monsterCount);
+        // printf("MOVE %d %d\n", ABS(game->opponent->base->pos->x - 4500), ABS(game->opponent->base->pos->y - 4500));
     }
 
-    return 0;
+    return (0);
 }
